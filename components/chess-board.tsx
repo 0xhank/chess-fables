@@ -1,26 +1,30 @@
 "use client";
 
+import { GameState } from "@/components/game-room";
 import { storyService } from "@/lib/story-service-instance";
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { Chessboard } from "react-chessboard";
 import { MoveStory } from "./move-story";
 import { PieceInfo } from "./piece-info";
-
+import { Badge } from "./ui/badge";
 interface ChessBoardProps {
     isStatic?: boolean;
-    position: string;
     onMove?: (from: string, to: string) => void;
-    playerColor?: "white" | "black";
+    playerId: string | null;
+    gameState: GameState;
 }
 
 export function ChessBoard({
     isStatic = false,
-    position,
     onMove,
-    playerColor = "white",
+    playerId,
+    gameState,
 }: ChessBoardProps) {
     const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
     const [latestStory, setLatestStory] = useState("");
+
+    const playerColor =
+        gameState.players.find((p) => p.id === playerId)?.color || "white";
 
     // Memoize the listener function
     const storyListener = useCallback((story: string) => {
@@ -40,8 +44,7 @@ export function ChessBoard({
         }
 
         // Initialize with the latest story
-        const lastStory =
-            storyService.getMoveHistory().slice(-1)[0]?.story || "";
+        const lastStory = storyService.getMoveHistory()[0]?.story || "";
         console.log("Initial story:", lastStory);
         setLatestStory(lastStory);
 
@@ -90,6 +93,33 @@ export function ChessBoard({
         }),
     };
 
+    const PlayerBadge = () => {
+        const isPlayerTurn =
+            (gameState.turn === "w" && playerColor === "white") ||
+            (gameState.turn === "b" && playerColor === "black");
+        return (
+            <div className={`flex justify-between items-center w-full p-2 ${isPlayerTurn ? "bg-green-300/50" : ""}`}>
+                <Badge className = {`${playerColor === "white" ? "bg-white text-black" : "bg-black text-white"}`}>
+                    {gameState.players.find((p) => p.color === playerColor)?.name}
+                </Badge>
+            </div>
+        );
+    };
+
+    const OpponentBadge = () => {
+        const opponentColor = playerColor === "white" ? "black" : "white";
+        const isOpponentTurn =
+            (gameState.turn === "w" && opponentColor === "white") ||
+            (gameState.turn === "b" && opponentColor === "black");
+        return (
+            <div className={`flex justify-between items-center w-full p-2 ${isOpponentTurn ? "bg-green-300/50" : ""}`}>
+                <Badge className = {`${opponentColor === "white" ? "bg-white text-black" : "bg-black text-white"}`}>
+                    {gameState.players.find((p) => p.color === opponentColor)?.name}
+                </Badge>
+            </div>
+        );
+    };
+
     return (
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 items-start">
             <div className="lg:col-span-2 h-full">
@@ -100,9 +130,11 @@ export function ChessBoard({
                 )}
             </div>
             <div className="lg:col-span-3">
+                <OpponentBadge />
+
                 <div className="aspect-square w-full">
                     <Chessboard
-                        position={position}
+                        position={gameState.position}
                         onPieceDrop={onDrop}
                         onSquareClick={onSquareClick}
                         boardOrientation={playerColor}
@@ -115,6 +147,7 @@ export function ChessBoard({
                         }}
                     />
                 </div>
+                <PlayerBadge />
                 <MoveStory story={latestStory} />
             </div>
         </div>

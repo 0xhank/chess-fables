@@ -1,22 +1,18 @@
 "use client";
 
 import { ChessBoard } from "@/components/chess-board";
+import { GameHistory } from "@/components/game-history";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-    Card,
-    CardContent,
-    CardFooter,
-    CardHeader,
-    CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import { useToast } from "@/components/ui/use-toast";
+import { WorldContextModal } from "@/components/world-context-modal";
 import { usePlayerIdentity } from "@/hooks/use-player-identity";
 import { storyService } from "@/lib/story-service-instance";
 import { supabase } from "@/lib/supabase";
 import { Chess } from "chess.js";
-import { AlertCircle, ArrowLeft, Copy } from "lucide-react";
+import { AlertCircle, ArrowLeft } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -32,12 +28,27 @@ type Player = {
     color?: "white" | "black";
 };
 
-type GameState = {
+type HistoryEntry = {
+    moveNumber: number;
+    white?: {
+        from: string;
+        to: string;
+        story: string;
+    };
+    black?: {
+        from: string;
+        to: string;
+        story: string;
+    };
+};
+
+export type GameState = {
     position: string;
     turn: "w" | "b";
     status: "waiting" | "playing" | "checkmate" | "draw" | "stalemate";
     players: Player[];
     lastMove?: { from: string; to: string };
+    history: HistoryEntry[];
 };
 
 export function GameRoom({
@@ -52,10 +63,13 @@ export function GameRoom({
         turn: "w",
         status: "waiting",
         players: [],
+        history: [],
     });
     const { id: playerId } = usePlayerIdentity(playerName);
     const [isPlayerTurn, setIsPlayerTurn] = useState(false);
     const [activeTabState] = useState(activeTab); // Added state for active tab (create/join)
+    const [showWorldContext, setShowWorldContext] = useState(false);
+    const [hasShownContext, setHasShownContext] = useState(false);
 
     // Join the game
     useEffect(() => {
@@ -170,6 +184,7 @@ export function GameRoom({
                                 color: "white",
                             },
                         ],
+                        history: [],
                     };
 
                     // Create the game
@@ -276,50 +291,51 @@ export function GameRoom({
         async (from: string, to: string) => {
             if (!gameState || gameState.status !== "playing") return;
 
+            // Create a new chess instance with current position
+            const game = new Chess(gameState.position);
+
             try {
-                const response = await fetch("/api/game/move", {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                        gameId,
+                // Attempt the move locally first
+                const move = game.move({ from, to });
+                if (!move) return;
+
+                // Update UI immediately
+                setGameState((prev) => ({
+                    ...prev,
+                    position: game.fen(),
+                    turn: game.turn() as "w" | "b",
+                    lastMove: { from, to },
+                }));
+
+                // Generate story immediately
+                const piece = storyService.getPieceAtPosition(from);
+                if (piece) {
+                    const capturedPiece = storyService.getPieceAtPosition(to);
+                    storyService.generateMoveStory(
+                        piece.id,
                         from,
                         to,
-                    }),
+                        capturedPiece?.id
+                    );
+                }
+
+                // Then send to server
+                const response = await fetch("/api/game/move", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ gameId, from, to }),
                 });
 
                 const data = await response.json();
 
-                if (response.ok) {
-                    const piece = storyService.getPieceAtPosition(from);
-                    console.log("Moving piece:", piece);
-                    if (piece) {
-                        const capturedPiece =
-                            storyService.getPieceAtPosition(to);
-                        console.log("Captured piece:", capturedPiece);
-
-                        // Generate and update the story
-                        const story = storyService.generateMoveStory(
-                            piece.id,
-                            from,
-                            to,
-                            capturedPiece?.id
-                        );
-                        console.log("Generated story:", story);
-                    }
-
+                if (!response.ok) {
+                    // Rollback on error
                     setGameState((prev) => ({
                         ...prev,
-                        ...data,
+                        position: gameState.position, // Revert to previous position
+                        turn: gameState.turn,
                     }));
-                } else {
-                    console.error("Move error:", data.error);
-                    toast({
-                        title: "Error",
-                        description: data.error,
-                        variant: "destructive",
-                    });
+                    throw new Error(data.error);
                 }
             } catch (error) {
                 console.error("Move error:", error);
@@ -368,9 +384,21 @@ export function GameRoom({
         return opponent ? opponent.name : "Waiting for opponent...";
     }, [gameState, playerId]);
 
+    // Show world context only when game starts for the first time
+    useEffect(() => {
+        if (
+            gameState.status === "playing" &&
+            gameState.players.length === 2 &&
+            !hasShownContext
+        ) {
+            setShowWorldContext(true);
+            setHasShownContext(true);
+        }
+    }, [gameState.status, gameState.players.length, hasShownContext]);
+
     return (
-        <div className="container mx-auto py-8 px-4">
-            <div className="flex items-center mb-6">
+        <div className="container max-w-7xl mx-auto p-4">
+            <div className="mb-4 flex items-center gap-4">
                 <Button variant="ghost" onClick={leaveGame} className="mr-2">
                     <ArrowLeft className="mr-2 h-4 w-4" />
                     Back
@@ -378,95 +406,41 @@ export function GameRoom({
                 <h1 className="text-2xl font-bold">Game Room</h1>
             </div>
 
-            <div className="grid md:grid-cols-[1fr_300px] gap-6">
+            <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-6">
                 <div>
-                    <div className="mb-4 flex justify-between items-center">
-                        <div>
-                            <Badge
-                                variant={
-                                    gameState.turn === "w"
-                                        ? "default"
-                                        : "outline"
-                                }
-                            >
-                                White:{" "}
-                                {gameState.players.find(
-                                    (p) => p.color === "white"
-                                )?.name || "Waiting..."}
-                            </Badge>
-                        </div>
-                        <div>
-                            <Badge
-                                variant={
-                                    gameState.turn === "b"
-                                        ? "default"
-                                        : "outline"
-                                }
-                            >
-                                Black:{" "}
-                                {gameState.players.find(
-                                    (p) => p.color === "black"
-                                )?.name || "Waiting..."}
-                            </Badge>
-                        </div>
+                    <div className="mb-4 flex flex-col gap-4">
+                        {gameState.players.find((p) => p.id === playerId)
+                            ?.color === "black" && (
+                            <div className="flex justify-between items-center">
+                                <Badge
+                                    variant={
+                                        gameState.turn === "w"
+                                            ? "default"
+                                            : "outline"
+                                    }
+                                >
+                                    White:{" "}
+                                    {gameState.players.find(
+                                        (p) => p.color === "white"
+                                    )?.name || "Waiting..."}
+                                </Badge>
+                            </div>
+                        )}
                     </div>
-
+                  
                     <ChessBoard
-                        position={gameState.position}
                         onMove={handleMove}
-                        playerColor={
-                            gameState.players.find((p) => p.id === playerId)
-                                ?.color || "white"
-                        }
+                        playerId={playerId}
+                        gameState={gameState}
                     />
+                   
                 </div>
 
                 <div className="space-y-4">
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>Game Information</CardTitle>
-                        </CardHeader>
-                        <CardContent className="space-y-4">
-                            <div>
-                                <div className="text-sm font-medium mb-1">
-                                    Game Code
-                                </div>
-                                <div className="flex items-center">
-                                    <code className="bg-muted px-2 py-1 rounded text-sm flex-1">
-                                        {gameId}
-                                    </code>
-                                    <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={copyGameId}
-                                    >
-                                        <Copy className="h-4 w-4" />
-                                    </Button>
-                                </div>
-                            </div>
-
-                            <div>
-                                <div className="text-sm font-medium mb-1">
-                                    Your Name
-                                </div>
-                                <div className="text-sm">{playerName}</div>
-                            </div>
-
-                            <div>
-                                <div className="text-sm font-medium mb-1">
-                                    Opponent
-                                </div>
-                                <div className="text-sm">{opponentName}</div>
-                            </div>
-
-                            <div>
-                                <div className="text-sm font-medium mb-1">
-                                    Status
-                                </div>
-                                <div className="text-sm">{statusMessage}</div>
-                            </div>
-                        </CardContent>
-                    </Card>
+                    <GameHistory
+                        history={gameState.history || []}
+                        currentTurn={gameState.turn}
+                    />
 
                     {gameState.status === "waiting" && (
                         <Alert>
@@ -498,6 +472,11 @@ export function GameRoom({
                     )}
                 </div>
             </div>
+
+            <WorldContextModal
+                open={showWorldContext}
+                onClose={() => setShowWorldContext(false)}
+            />
         </div>
     );
 }
