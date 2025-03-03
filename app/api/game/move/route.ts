@@ -1,3 +1,4 @@
+import { StoryService } from "@/lib/story-service";
 import { supabase } from "@/lib/supabase";
 import { Chess } from "chess.js";
 import { NextResponse } from "next/server";
@@ -12,7 +13,10 @@ type GameState = {
         color?: "white" | "black";
     }[];
     lastMove?: { from: string; to: string };
+    lastMoveStory?: string;
 };
+
+const storyService = new StoryService();
 
 export async function POST(request: Request) {
     try {
@@ -69,6 +73,56 @@ export async function POST(request: Request) {
                     { status: 400 }
                 );
             }
+
+            // Generate story for the move
+            const pieceId = `${move.color}_${move.piece}_${from}`;
+            const story = storyService.generateMoveStory(
+                pieceId,
+                from,
+                to,
+                move.captured
+                    ? `${move.color === "w" ? "b" : "w"}_${move.captured}_${to}`
+                    : undefined
+            );
+
+            // Update game state
+            const updatedGameState: GameState = {
+                ...gameState,
+                position: game.fen(),
+                turn: game.turn() as "w" | "b",
+                lastMove: { from, to },
+                lastMoveStory: story,
+                status: game.isCheckmate()
+                    ? "checkmate"
+                    : game.isDraw()
+                    ? "draw"
+                    : game.isStalemate()
+                    ? "stalemate"
+                    : "playing",
+            };
+
+            // Save to database
+            const { error: updateError } = await supabase
+                .from("games")
+                .update({ game_state: updatedGameState })
+                .eq("id", gameId);
+
+            if (updateError) {
+                console.error("Update error:", updateError);
+                return NextResponse.json(
+                    { error: "Failed to update game state" },
+                    { status: 500 }
+                );
+            }
+
+            return NextResponse.json({
+                position: updatedGameState.position,
+                status: updatedGameState.status,
+                turn: updatedGameState.turn,
+                players: updatedGameState.players,
+                lastMove: updatedGameState.lastMove,
+                lastMoveStory: updatedGameState.lastMoveStory,
+            });
         } catch (error) {
             console.error("Move error:", error);
             return NextResponse.json(
@@ -76,43 +130,6 @@ export async function POST(request: Request) {
                 { status: 400 }
             );
         }
-
-        // Update game state
-        const updatedGameState: GameState = {
-            ...gameState,
-            position: game.fen(),
-            turn: game.turn() as "w" | "b",
-            lastMove: { from, to },
-            status: game.isCheckmate()
-                ? "checkmate"
-                : game.isDraw()
-                ? "draw"
-                : game.isStalemate()
-                ? "stalemate"
-                : "playing",
-        };
-
-        // Save to database
-        const { error: updateError } = await supabase
-            .from("games")
-            .update({ game_state: updatedGameState })
-            .eq("id", gameId);
-
-        if (updateError) {
-            console.error("Update error:", updateError);
-            return NextResponse.json(
-                { error: "Failed to update game state" },
-                { status: 500 }
-            );
-        }
-
-        return NextResponse.json({
-            position: updatedGameState.position,
-            status: updatedGameState.status,
-            turn: updatedGameState.turn,
-            players: updatedGameState.players,
-            lastMove: updatedGameState.lastMove
-        });
     } catch (error) {
         console.error("Error processing move:", error);
         return NextResponse.json(

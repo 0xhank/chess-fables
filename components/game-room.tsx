@@ -389,7 +389,6 @@ export function GameRoom({
                         </div>
                     </div>
 
-                    <div className="max-w-[600px] mx-auto">
                         <ChessBoard
                             position={gameState.position}
                             onMove={handleMove}
@@ -398,7 +397,6 @@ export function GameRoom({
                                     ?.color || "white"
                             }
                         />
-                    </div>
                 </div>
 
                 <div className="space-y-4">
