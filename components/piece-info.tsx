@@ -8,6 +8,7 @@ export function PieceInfo({ piece }: PieceInfoProps) {
     return (
         <div className="bg-background p-6 rounded-lg shadow-xl w-full h-full overflow-y-auto">
             <h2 className="text-2xl font-bold mb-4">{piece.name}</h2>
+            <p className="text-sm text-muted-foreground mb-4">ID: {piece.id}</p>
 
             <div className="space-y-4">
                 <div>

@@ -1132,8 +1132,48 @@ const initialPieces: { [key: string]: ChessPiece } = {
     },
 };
 
+type StoryListener = (story: string) => void;
+
 export class StoryService {
     private pieces: { [key: string]: ChessPiece } = initialPieces;
+    private moveHistory: { pieceId: string; story: string }[] = [];
+    private listeners: StoryListener[] = [];
+
+    subscribe(listener: StoryListener) {
+        console.log("Adding listener", {
+            currentCount: this.listeners.length,
+            newListener: listener.toString(),
+        });
+
+        // Prevent duplicate listeners
+        if (!this.listeners.includes(listener)) {
+            this.listeners.push(listener);
+        }
+
+        return () => {
+            console.log("Removing listener", {
+                beforeCount: this.listeners.length,
+                removingListener: listener.toString(),
+            });
+            this.listeners = this.listeners.filter((l) => l !== listener);
+            console.log("After removal:", this.listeners.length);
+        };
+    }
+
+    private notifyListeners(story: string) {
+        console.log("Notifying listeners", {
+            listenerCount: this.listeners.length,
+            story,
+            listeners: this.listeners.map((l) => l.toString()),
+        });
+        this.listeners.forEach((listener) => {
+            try {
+                listener(story);
+            } catch (error) {
+                console.error("Error in story listener:", error);
+            }
+        });
+    }
 
     getPieceAtPosition(position: string): ChessPiece | null {
         return (
@@ -1157,15 +1197,24 @@ export class StoryService {
         piece.position = to;
         piece.current_game.moves_made++;
 
+        let story = "";
         if (capture) {
             const capturedPiece = this.pieces[capture];
             if (capturedPiece) {
                 capturedPiece.status = "captured";
-                return this.generateCaptureStory(piece, capturedPiece);
+                story = this.generateCaptureStory(piece, capturedPiece);
             }
+        } else {
+            story = this.generateBasicMoveStory(piece, from, to);
         }
 
-        return this.generateBasicMoveStory(piece, from, to);
+        // Store the story in history
+        this.moveHistory.push({ pieceId, story });
+
+        // Notify listeners of the new story
+        this.notifyListeners(story);
+
+        return story;
     }
 
     private generateBasicMoveStory(
@@ -1196,5 +1245,9 @@ export class StoryService {
                 ? `With overwhelming force, ${attacker.name} claims victory.`
                 : `After a valiant struggle, ${defender.name} falls to ${attacker.name}'s superior position.`
         }`;
+    }
+
+    getMoveHistory(): { pieceId: string; story: string }[] {
+        return this.moveHistory;
     }
 }

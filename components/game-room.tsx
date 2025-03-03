@@ -13,11 +13,12 @@ import {
 } from "@/components/ui/card";
 import { useToast } from "@/components/ui/use-toast";
 import { usePlayerIdentity } from "@/hooks/use-player-identity";
+import { storyService } from "@/lib/story-service-instance";
 import { supabase } from "@/lib/supabase";
 import { Chess } from "chess.js";
 import { AlertCircle, ArrowLeft, Copy } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 interface GameRoomProps {
     gameId: string;
@@ -231,7 +232,8 @@ export function GameRoom({
         joinGame();
     }, [gameId, playerId, playerName, router, toast, activeTabState]);
 
-    useEffect(() => {        // Set up realtime subscription
+    useEffect(() => {
+        // Set up realtime subscription
         console.log("listening to game", gameId);
         const gameChannel = supabase
             .channel(`game-${gameId}`)
@@ -270,46 +272,66 @@ export function GameRoom({
         }
     }, [gameState, playerId]);
 
-    const handleMove = async (from: string, to: string) => {
-        if (!isPlayerTurn) return;
+    const handleMove = useCallback(
+        async (from: string, to: string) => {
+            if (!gameState || gameState.status !== "playing") return;
 
-        try {
-            const response = await fetch("/api/game/move", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    gameId,
-                    from,
-                    to,
-                }),
-            });
+            try {
+                const response = await fetch("/api/game/move", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                        gameId,
+                        from,
+                        to,
+                    }),
+                });
 
-            if (!response.ok) {
-                const errorData = await response.json();
-                console.error("Move error:", errorData);
-                throw new Error(errorData.error || "Failed to make move");
+                const data = await response.json();
+
+                if (response.ok) {
+                    const piece = storyService.getPieceAtPosition(from);
+                    console.log("Moving piece:", piece);
+                    if (piece) {
+                        const capturedPiece =
+                            storyService.getPieceAtPosition(to);
+                        console.log("Captured piece:", capturedPiece);
+
+                        // Generate and update the story
+                        const story = storyService.generateMoveStory(
+                            piece.id,
+                            from,
+                            to,
+                            capturedPiece?.id
+                        );
+                        console.log("Generated story:", story);
+                    }
+
+                    setGameState((prev) => ({
+                        ...prev,
+                        ...data,
+                    }));
+                } else {
+                    console.error("Move error:", data.error);
+                    toast({
+                        title: "Error",
+                        description: data.error,
+                        variant: "destructive",
+                    });
+                }
+            } catch (error) {
+                console.error("Move error:", error);
+                toast({
+                    title: "Error",
+                    description: "Failed to make move",
+                    variant: "destructive",
+                });
             }
-
-            // Update local state immediately with the response
-            const data = await response.json();
-            setGameState((prevState) => ({
-                ...prevState,
-                position: data.position,
-                turn: data.turn,
-                status: data.status,
-                lastMove: { from, to },
-            }));
-        } catch (error) {
-            console.error("Error making move:", error);
-            toast({
-                title: "Error",
-                description: "Failed to make the move. Please try again.",
-                variant: "destructive",
-            });
-        }
-    };
+        },
+        [gameId, gameState, toast]
+    );
 
     const copyGameId = () => {
         navigator.clipboard.writeText(gameId);
@@ -389,14 +411,14 @@ export function GameRoom({
                         </div>
                     </div>
 
-                        <ChessBoard
-                            position={gameState.position}
-                            onMove={handleMove}
-                            playerColor={
-                                gameState.players.find((p) => p.id === playerId)
-                                    ?.color || "white"
-                            }
-                        />
+                    <ChessBoard
+                        position={gameState.position}
+                        onMove={handleMove}
+                        playerColor={
+                            gameState.players.find((p) => p.id === playerId)
+                                ?.color || "white"
+                        }
+                    />
                 </div>
 
                 <div className="space-y-4">
